@@ -1,2 +1,4 @@
 requests
 aiohttp
+sqlite3
+pathlib
