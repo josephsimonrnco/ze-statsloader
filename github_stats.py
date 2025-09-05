@@ -1,11 +1,13 @@
 #!/usr/bin/python3
 
+
 import asyncio
 import os
 from typing import Dict, List, Optional, Set, Tuple, Any, cast
-
+from pathlib import Path
 import aiohttp
 import requests
+import sqlite3
 
 
 ###############################################################################
@@ -264,6 +266,8 @@ class Stats(object):
         self._exclude_repos = set() if exclude_repos is None else exclude_repos
         self._exclude_langs = set() if exclude_langs is None else exclude_langs
         self.queries = Queries(username, access_token, session)
+        self.db_path = Path('stats_cache.db')
+        self._init_db()
 
         self._name: Optional[str] = None
         self._stargazers: Optional[int] = None
@@ -273,6 +277,26 @@ class Stats(object):
         self._repos: Optional[Set[str]] = None
         self._lines_changed: Optional[Tuple[int, int]] = None
         self._views: Optional[int] = None
+
+    def _init_db(self):
+        self.conn = sqlite3.connect(self.db_path)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS repo_lines (
+                repo TEXT PRIMARY KEY,
+                additions INTEGER,
+                deletions INTEGER
+            )
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS commit_lines (
+                repo TEXT,
+                sha TEXT,
+                additions INTEGER,
+                deletions INTEGER,
+                PRIMARY KEY (repo, sha)
+            )
+        """)
+        self.conn.commit()
 
     async def to_str(self) -> str:
         """
@@ -376,8 +400,14 @@ Languages:
 
         # TODO: Improve languages to scale by number of contributions to
         #       specific filetypes
+        excluded_langs = {'Jupyter Notebook'}
+        for lang in excluded_langs:
+            try:
+                self._languages.pop(lang)
+            except KeyError:
+                pass
         langs_total = sum([v.get("size", 0) for v in self._languages.values()])
-        for k, v in self._languages.items():
+        for v in self._languages.values():
             v["prop"] = 100 * (v.get("size", 0) / langs_total)
 
     @property
@@ -474,6 +504,67 @@ Languages:
             )
         return cast(int, self._total_contributions)
 
+    async def _compute_commit_lines(self, repo: str, sha: str) -> Tuple[int, int]:
+        """Get line changes for a commit, excluding notebooks (with SQLite caching)."""
+        cur = self.conn.execute(
+            "SELECT additions, deletions FROM commit_lines WHERE repo=? AND sha=?",
+            (repo, sha),
+        )
+        row = cur.fetchone()
+        if row:  # already cached
+            return row
+
+        # fetch from API
+        commit_data = await self.queries.query_rest(f"/repos/{repo}/commits/{sha}")
+        additions, deletions = 0, 0
+        for f in commit_data.get("files", []):
+            filename = f.get("filename", "")
+            if filename.endswith(".ipynb"):
+                continue
+            additions += f.get("additions", 0)
+            deletions += f.get("deletions", 0)
+
+        # store in DB
+        self.conn.execute(
+            "INSERT OR REPLACE INTO commit_lines (repo, sha, additions, deletions) VALUES (?, ?, ?, ?)",
+            (repo, sha, additions, deletions),
+        )
+        self.conn.commit()
+        return additions, deletions
+
+    async def _compute_repo_lines(self, repo: str) -> Tuple[int, int]:
+        """Compute additions/deletions for a repo by walking commits with caching."""
+        additions, deletions = 0, 0
+        page = 1
+
+        while True:
+            commits = await self.queries.query_rest(
+                f"/repos/{repo}/commits",
+                params={"author": self.username, "per_page": 100, "page": page},
+            )
+            if not commits or not isinstance(commits, list):
+                break
+
+            for commit in commits:
+                sha = commit.get("sha")
+                if not sha:
+                    continue
+                a, d = await self._compute_commit_lines(repo, sha)
+                additions += a
+                deletions += d
+
+            if len(commits) < 100:
+                break
+            page += 1
+
+        # store aggregate
+        self.conn.execute(
+            "INSERT OR REPLACE INTO repo_lines (repo, additions, deletions) VALUES (?, ?, ?)",
+            (repo, additions, deletions),
+        )
+        self.conn.commit()
+        return additions, deletions
+    
     @property
     async def lines_changed(self) -> Tuple[int, int]:
         """
@@ -484,20 +575,18 @@ Languages:
         additions = 0
         deletions = 0
         for repo in await self.repos:
-            r = await self.queries.query_rest(f"/repos/{repo}/stats/contributors")
-            for author_obj in r:
-                # Handle malformed response from the API by skipping this repo
-                if not isinstance(author_obj, dict) or not isinstance(
-                    author_obj.get("author", {}), dict
-                ):
-                    continue
-                author = author_obj.get("author", {}).get("login", "")
-                if author != self.username:
-                    continue
+            cur = self.conn.execute(
+                "SELECT additions, deletions FROM repo_lines WHERE repo=?",
+                (repo,),
+            )
+            row = cur.fetchone()
+            if row:
+                repo_adds, repo_dels = row
+            else:
+                repo_adds, repo_dels = await self._compute_repo_lines(repo)
 
-                for week in author_obj.get("weeks", []):
-                    additions += week.get("a", 0)
-                    deletions += week.get("d", 0)
+            additions += repo_adds
+            deletions += repo_dels
 
         self._lines_changed = (additions, deletions)
         return self._lines_changed
