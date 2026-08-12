@@ -114,6 +114,14 @@ async def main() -> None:
     excluded_langs = (
         {x.strip() for x in exclude_langs.split(",")} if exclude_langs else None
     )
+    # Former usernames need no configuration -- GitHub resolves them to the
+    # same account. This is only for genuinely separate accounts.
+    extra_logins_raw = os.getenv("EXTRA_LOGINS")
+    extra_logins = (
+        [x.strip() for x in extra_logins_raw.split(",") if x.strip()]
+        if extra_logins_raw
+        else None
+    )
     # Convert a truthy value to a Boolean
     raw_ignore_forked_repos = os.getenv("EXCLUDE_FORKED_REPOS")
     ignore_forked_repos = (
@@ -128,7 +136,10 @@ async def main() -> None:
             exclude_repos=excluded_repos,
             exclude_langs=excluded_langs,
             ignore_forked_repos=ignore_forked_repos,
+            extra_logins=extra_logins,
         )
+        identities = ", ".join(str(i.get("login")) for i in await s.identities)
+        print(f"Counting activity for: {identities}")
         await asyncio.gather(generate_languages(s), generate_overview(s))
 
 

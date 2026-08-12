@@ -1,4 +1,4 @@
-# [GitHub Stats Visualization](https://github.com/jstrieb/github-stats)
+s a# [GitHub Stats Visualization](https://github.com/jstrieb/github-stats)
 
 <!--
 https://github.community/t/support-theme-context-for-images-in-light-vs-dark-mode/147981/84
@@ -100,6 +100,10 @@ For more information on inaccuracies, see issue
      information about private repositories. If you're not worried about that,
      you can change the values directly [in the Actions workflow
      itself](https://github.com/jstrieb/github-stats/blob/05de1314b870febd44d19ad2f55d5e59d83f5857/.github/workflows/main.yml#L48-L53).
+   - To count activity from a **separate** GitHub account as well, add its
+     login to a secret called `EXTRA_LOGINS` (comma-separated for several).
+     You do **not** need this for former usernames of the same account — see
+     "Renamed accounts" below.
 6. Go to the [Actions
    Page](../../actions?query=workflow%3A"Generate+Stats+Images") and press "Run
    Workflow" on the right side of the screen to generate images for the first
@@ -122,6 +126,62 @@ For more information on inaccuracies, see issue
 9. Link back to this repository so that others can generate their own
    statistics images.
 10. Star this repo if you like it!
+
+
+# Renamed accounts and old usernames
+
+Commits are attributed by the account's **node ID**, not by its username, so
+every identity the account has ever used is counted automatically:
+
+- Former usernames (e.g. commits made while the account was called something
+  else) are counted.
+- Old commit emails — including work addresses that have since been removed
+  from the account — are counted, because GitHub resolves them back to the
+  account.
+- Renaming the account in future will not break anything, and will not
+  invalidate the commit cache.
+
+This matters because the obvious approach — filtering the REST commits endpoint
+by `?author=<username>` — silently returns zero for every commit made under a
+previous name. That is a wrong answer that looks exactly like a correct one.
+
+`EXTRA_LOGINS` is only for genuinely **separate** accounts. If you list a former
+username there, the run will tell you it resolves to the same account and skip
+it rather than double-counting.
+
+
+# What counts as a line
+
+Jupyter notebooks are excluded from the line count — a single re-executed
+notebook can outweigh every hand-written line in the account. The check is made
+per commit, against the files that commit actually touched.
+
+It deliberately does *not* skip repositories that GitHub no longer reports as
+containing Jupyter Notebook. A repository whose notebooks were deleted, or
+converted to Jupytext `.py` files, drops the language from its profile while its
+history still contains them; one such repository added over 800,000 phantom
+lines to the total here.
+
+Because the per-commit file list only exists in the REST API, the first run
+makes one request per commit and is slow. Results are cached in
+[`stats_cache.db`](stats_cache.db) by commit SHA, which is immutable, so
+subsequent runs only pay for new commits. The cache is committed to the
+repository; deleting it is safe but the next run will be slow again.
+
+
+# Local development
+
+Dependencies are managed with [uv](https://docs.astral.sh/uv/); there is no
+`requirements.txt`.
+
+```sh
+uv sync
+ACCESS_TOKEN=<your token> GITHUB_ACTOR=<your username> uv run python generate_images.py
+```
+
+The access token needs the `read:user` and `repo` scopes. A token missing
+`read:user` reports zero contributions rather than failing, so check the scopes
+first if that number looks wrong.
 
 
 # Support the Project

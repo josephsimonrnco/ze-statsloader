@@ -83,6 +83,8 @@ ipython_config.py
 
 # pyenv
 .python-version
+# ...but uv reads .python-version to pin the interpreter, so it is tracked here
+!.python-version
 
 # pipenv
 #   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.

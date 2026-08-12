@@ -16,33 +16,37 @@ jobs:
 
     steps:
     # Check out repository under $GITHUB_WORKSPACE, so the job can access it
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-    # Run using Python 3.8 for consistency and aiohttp
-    - name: Set up Python 3.8
-      uses: actions/setup-python@v4
+    # Dependencies are resolved from pyproject.toml / uv.lock
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
       with:
-        python-version: '3.8'
-        architecture: 'x64'
-        cache: 'pip'
+        enable-cache: true
 
-    # Install dependencies with `pip`
-    - name: Install requirements
-      run: |
-        python3 -m pip install --upgrade pip setuptools wheel
-        python3 -m pip install -r requirements.txt
+    - name: Set up Python
+      run: uv python install
 
     # Generate all statistics images
     - name: Generate images
       run: |
-        python3 --version
-        python3 generate_images.py
+        uv run --frozen python generate_images.py
       env:
         ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         EXCLUDED: ${{ secrets.EXCLUDED }}
         EXCLUDED_LANGS: ${{ secrets.EXCLUDED_LANGS }}
         EXCLUDE_FORKED_REPOS: true
+        # Only needed for genuinely separate GitHub accounts. Former usernames
+        # of this account are resolved automatically.
+        EXTRA_LOGINS: ${{ secrets.EXTRA_LOGINS }}
+
+    # A scheduled workflow is disabled after 60 days without repository
+    # activity. The generated badges are often byte-identical from one day to
+    # the next, which produces no commit and no activity -- that is what
+    # silently switched this workflow off. The heartbeat guarantees a commit.
+    - name: Record run timestamp
+      run: date -u +"%Y-%m-%dT%H:%M:%SZ" > generated/last_run.txt
 
     # Commit all changed files to the repository
     - name: Commit to the repo

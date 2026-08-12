@@ -1,0 +1,22 @@
+[project]
+name = "ze-statsloader"
+version = "1.0.0"
+description = "Generate SVG badges summarising GitHub activity across every identity an account has used"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "aiohttp>=3.9",
+    "requests>=2.31",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.8",
+    "types-requests>=2.31",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv]
+package = false
